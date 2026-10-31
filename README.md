@@ -29,16 +29,28 @@ For each model, e.g. `User`:
 
 | Path | Operations |
 |---|---|
-| `/users` | `GET` lists records page by page (`limit`, `offset`); `POST` creates one |
+| `/users` | `GET` lists records page by page (`limit`, `offset`); `POST` creates one and answers `201` with its URL in `Location` |
 | `/users/{id}` | `GET` reads one, `PUT` replaces it, `PATCH` changes some fields, `DELETE` deletes it |
 
 | Schema | |
 |---|---|
 | `User` | A record as the API returns it, with the whole model |
 | `UserInput` | What clients send to create or replace a record: no values the database generates; required are the fields that must not be null and have no default |
-| `UserPatch` | What clients send to change some fields: any of them, at least one |
+| `UserPatch` | What clients send to change some fields, as a JSON Merge Patch (RFC 7396, `application/merge-patch+json`): the fields given replace the record's, `null` clears a field, the others keep their values |
 | `UserList` | A page of records: `items` and the `total` number of records |
 | `Problem` | Errors: RFC 9457 problem details, as `application/problem+json` |
+
+Errors are problem details:
+
+| Status | When |
+|---|---|
+| `400` | The request is malformed: the body is not valid JSON, or a query parameter is not valid |
+| `404` | There is no such record |
+| `409` | The record conflicts with another one, e.g. a duplicate unique value |
+| `412` | With `etags`: the record has changed since the version given in `If-Match` |
+| `415` | The body is not in a media type the operation accepts |
+| `422` | The record is not valid: a value breaks a constraint of the model |
+| `default` | An unexpected error |
 
 Item paths use the primary key: the `primaryKey` field, or the fields of a `primaryKey` table constraint.
 A composite key gives paths like `/tickets/{eventId}/{seat}`. Models without a primary key get only the collection
@@ -92,6 +104,8 @@ gives the paths `/users` (`listUsers`, `createUser`) and `/users/{id}` (`getUser
 | `operations` | all | Which of `list`, `create`, `read`, `replace`, `update`, `delete` to describe |
 | `paths` | from model names | Collection paths by model name, e.g. `{ Person: '/people' }` |
 | `defaultPageSize`, `maxPageSize` | 20, 100 | Default and largest `limit` |
+| `etags` | `false` | Optimistic locking: responses with a record have an `ETag`; `PUT`, `PATCH` and `DELETE` take `If-Match` and fail with `412` when the record has changed since, so no client overwrites changes it hasn't seen |
+| `pageLinks` | `false` | List pages have `links` to the `self`, `first`, `prev`, `next` and `last` pages |
 
 ### Types
 

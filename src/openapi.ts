@@ -16,6 +16,7 @@ export interface OpenApiDocument {
     components?: {
         schemas?: Record<string, JsonSchema>;
         parameters?: Record<string, any>;
+        headers?: Record<string, any>;
         responses?: Record<string, any>;
     };
 }

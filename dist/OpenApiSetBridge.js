@@ -5,6 +5,7 @@ import { OPENAPI_VERSION } from "./openapi.js";
 import { fieldSchema, parameterSchema, readField, withoutExtensions } from "./schemas.js";
 export const CRUD_OPERATIONS = ['list', 'create', 'read', 'replace', 'update', 'delete'];
 const JSON_CONTENT = 'application/json';
+const MERGE_PATCH_CONTENT = 'application/merge-patch+json';
 const PROBLEM_CONTENT = 'application/problem+json';
 /** RFC 9457 problem details, the body of error responses. */
 const PROBLEM_SCHEMA = {
@@ -19,9 +20,19 @@ const PROBLEM_SCHEMA = {
     },
 };
 const ERROR_RESPONSES = {
-    BadRequest: 'The request is not valid',
+    BadRequest: 'The request is malformed, e.g. the body is not valid JSON or a query parameter is not valid',
     NotFound: 'There is no such record',
     Conflict: 'The record conflicts with another one, e.g. a duplicate unique value',
+    UnsupportedMediaType: 'The body is not in a media type the operation accepts',
+    UnprocessableContent: 'The record is not valid: a value breaks a constraint of the model',
+    Error: 'An unexpected error',
+};
+const PRECONDITION_FAILED = 'The record has changed since the version given in If-Match';
+const PAGE_LINKS_SCHEMA = {
+    type: 'object',
+    description: 'Links to pages of the same list',
+    properties: Object.fromEntries(['self', 'first', 'prev', 'next', 'last'].map(name => [name, { type: 'string', format: 'uri-reference' }])),
+    required: ['self', 'first', 'last'],
 };
 const problem = (name) => ({ $ref: `#/components/responses/${name}` });
 const schemaRef = (name) => ({ $ref: `#/components/schemas/${name}` });
@@ -99,7 +110,7 @@ export class OpenApiSetBridge {
                 ...(model.metadata.description !== undefined ? { description: model.metadata.description } : {}),
             })),
             paths: {},
-            components: { schemas: {}, parameters: this.pageParameters(), responses: this.errorResponses() },
+            components: { schemas: {}, parameters: this.parameters(), headers: this.headers(), responses: this.errorResponses() },
         };
         for (const model of models) {
             const component = names.get(model.metadata.name);
@@ -107,6 +118,8 @@ export class OpenApiSetBridge {
             Object.assign(document.paths, this.paths(model, component, resolve));
         }
         document.components.schemas.Problem = PROBLEM_SCHEMA;
+        if (this.options.pageLinks === true)
+            document.components.schemas.PageLinks = PAGE_LINKS_SCHEMA;
         return document;
     }
     schemas(model, name, resolve) {
@@ -151,7 +164,7 @@ export class OpenApiSetBridge {
             },
             [`${name}Patch`]: {
                 type: 'object',
-                description: `Fields of a ${name} to change; the others keep their values`,
+                description: `Fields of a ${name} to change, as a JSON Merge Patch: null clears a field, fields not given keep their values`,
                 properties: input,
                 minProperties: 1,
             },
@@ -161,31 +174,45 @@ export class OpenApiSetBridge {
                 properties: {
                     items: { type: 'array', items: schemaRef(name) },
                     total: { type: 'integer', format: 'int64', minimum: 0, description: 'Number of records on all pages' },
+                    ...(this.options.pageLinks === true ? { links: schemaRef('PageLinks') } : {}),
                 },
-                required: ['items', 'total'],
+                required: ['items', 'total', ...(this.options.pageLinks === true ? ['links'] : [])],
             },
         };
     }
     paths(model, name, resolve) {
         const operations = new Set(this.options.operations ?? CRUD_OPERATIONS);
+        const etags = this.options.etags === true;
         const collection = this.options.paths?.[model.metadata.name] ?? collectionPath(model.metadata.name);
         const keys = keyFields(model);
         const names = plural(name);
         const tags = [name];
-        const body = (schema) => ({ required: true, content: json(schemaRef(schema)) });
-        const record = (description) => ({ description, content: json(schemaRef(name)) });
+        const body = (schema, media = JSON_CONTENT) => ({ required: true, content: { [media]: { schema: schemaRef(schema) } } });
+        // A response with a record; with its version when there are ETags
+        const record = (description, headers = {}) => ({
+            description,
+            ...(etags || Object.keys(headers).length > 0 ? { headers: { ...headers, ...(etags ? { ETag: { $ref: '#/components/headers/ETag' } } : {}) } } : {}),
+            content: json(schemaRef(name)),
+        });
+        // Responses of operations that write a record
+        const writeErrors = {
+            400: problem('BadRequest'), 409: problem('Conflict'), 415: problem('UnsupportedMediaType'), 422: problem('UnprocessableContent'),
+        };
+        const precondition = etags ? { 412: problem('PreconditionFailed') } : {};
+        const ifMatch = etags ? [{ $ref: '#/components/parameters/IfMatch' }] : [];
+        const unexpected = { default: problem('Error') };
         const paths = {};
         const collectionOperations = {};
         if (operations.has('list'))
             collectionOperations.get = {
                 operationId: `list${names}`, summary: `List ${names}`, tags,
                 parameters: [{ $ref: '#/components/parameters/Limit' }, { $ref: '#/components/parameters/Offset' }],
-                responses: { 200: { description: `A page of ${names}`, content: json(schemaRef(`${name}List`)) }, 400: problem('BadRequest') },
+                responses: { 200: { description: `A page of ${names}`, content: json(schemaRef(`${name}List`)) }, 400: problem('BadRequest'), ...unexpected },
             };
         if (operations.has('create'))
             collectionOperations.post = {
                 operationId: `create${name}`, summary: `Create a ${name}`, tags, requestBody: body(`${name}Input`),
-                responses: { 201: record(`The created ${name}`), 400: problem('BadRequest'), 409: problem('Conflict') },
+                responses: { 201: record(`The created ${name}`, { Location: { $ref: '#/components/headers/Location' } }), ...writeErrors, ...unexpected },
             };
         if (Object.keys(collectionOperations).length > 0)
             paths[collection] = collectionOperations;
@@ -200,30 +227,43 @@ export class OpenApiSetBridge {
         if (operations.has('read'))
             itemOperations.get = {
                 operationId: `get${name}`, summary: `Get a ${name}`, tags,
-                responses: { 200: record(`The ${name}`), 404: problem('NotFound') },
+                responses: { 200: record(`The ${name}`), 404: problem('NotFound'), ...unexpected },
             };
         if (operations.has('replace'))
             itemOperations.put = {
                 operationId: `replace${name}`, summary: `Replace a ${name}`, tags, requestBody: body(`${name}Input`),
-                responses: { 200: record(`The ${name} as replaced`), 400: problem('BadRequest'), 404: problem('NotFound'), 409: problem('Conflict') },
+                ...(etags ? { parameters: ifMatch } : {}),
+                responses: { 200: record(`The ${name} as replaced`), ...writeErrors, 404: problem('NotFound'), ...precondition, ...unexpected },
             };
         if (operations.has('update'))
             itemOperations.patch = {
-                operationId: `update${name}`, summary: `Change fields of a ${name}`, tags, requestBody: body(`${name}Patch`),
-                responses: { 200: record(`The ${name} as changed`), 400: problem('BadRequest'), 404: problem('NotFound'), 409: problem('Conflict') },
+                operationId: `update${name}`, summary: `Change fields of a ${name}`, tags,
+                description: 'JSON Merge Patch (RFC 7396): the fields given replace the ones of the record, null clears a field, the others keep their values.',
+                requestBody: body(`${name}Patch`, MERGE_PATCH_CONTENT),
+                ...(etags ? { parameters: ifMatch } : {}),
+                responses: { 200: record(`The ${name} as changed`), ...writeErrors, 404: problem('NotFound'), ...precondition, ...unexpected },
             };
         if (operations.has('delete'))
             itemOperations.delete = {
                 operationId: `delete${name}`, summary: `Delete a ${name}`, tags,
-                responses: { 204: { description: `The ${name} is deleted` }, 404: problem('NotFound') },
+                ...(etags ? { parameters: ifMatch } : {}),
+                responses: { 204: { description: `The ${name} is deleted` }, 404: problem('NotFound'), ...precondition, ...unexpected },
             };
         if (Object.keys(itemOperations).length > 1)
             paths[collection + keys.map(field => `/{${field.name}}`).join('')] = itemOperations;
         return paths;
     }
-    pageParameters() {
+    parameters() {
         const maxPageSize = this.options.maxPageSize ?? 100;
+        const ifMatch = {
+            IfMatch: {
+                name: 'If-Match', in: 'header',
+                description: 'ETag of the version of the record the change is based on; the change fails with 412 if the record has changed since',
+                schema: { type: 'string' },
+            },
+        };
         return {
+            ...(this.options.etags === true ? ifMatch : {}),
             Limit: {
                 name: 'limit', in: 'query', description: 'Number of records on the page',
                 schema: { type: 'integer', minimum: 1, maximum: maxPageSize, default: this.options.defaultPageSize ?? 20 },
@@ -234,8 +274,17 @@ export class OpenApiSetBridge {
             },
         };
     }
+    headers() {
+        return {
+            Location: { description: 'URL of the created record', schema: { type: 'string', format: 'uri-reference' } },
+            ...(this.options.etags === true
+                ? { ETag: { description: 'Version of the record, for If-Match', schema: { type: 'string' } } }
+                : {}),
+        };
+    }
     errorResponses() {
-        return Object.fromEntries(Object.entries(ERROR_RESPONSES).map(([name, description]) => [name, { description, content: { [PROBLEM_CONTENT]: { schema: schemaRef('Problem') } } }]));
+        const responses = this.options.etags === true ? { ...ERROR_RESPONSES, PreconditionFailed: PRECONDITION_FAILED } : ERROR_RESPONSES;
+        return Object.fromEntries(Object.entries(responses).map(([name, description]) => [name, { description, content: { [PROBLEM_CONTENT]: { schema: schemaRef('Problem') } } }]));
     }
     readModel(name, schema, modelName) {
         const xModel = schema['x-model'] ?? {};

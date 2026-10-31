@@ -19,6 +19,13 @@ export interface OpenApiBridgeOptions {
     defaultPageSize?: number;
     /** Largest page size a client may ask for (default: 100). */
     maxPageSize?: number;
+    /**
+     * Optimistic locking (default: false): responses with a record have an ETag header, and PUT, PATCH and DELETE take
+     * If-Match, failing with 412 when the record has changed since, so that no client overwrites changes it hasn't seen.
+     */
+    etags?: boolean;
+    /** Links to the first, previous, next and last pages in list responses (default: false). */
+    pageLinks?: boolean;
 }
 /**
  * OpenAPI description of a CRUD API for a set of models, and the models back from such a description.
@@ -45,7 +52,8 @@ export declare class OpenApiSetBridge implements ModelSetBridge<OpenApiDocument>
     protected document(models: ModelData[], title: string): OpenApiDocument;
     private schemas;
     private paths;
-    private pageParameters;
+    private parameters;
+    private headers;
     private errorResponses;
     private readModel;
 }

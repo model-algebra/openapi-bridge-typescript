@@ -41,9 +41,30 @@ describe('the document', () => {
         expect(list.responses[200].content['application/json'].schema).toEqual({ $ref: '#/components/schemas/EventList' });
         expect(paths['/events'].post.requestBody.content['application/json'].schema).toEqual({ $ref: '#/components/schemas/EventInput' });
         expect(paths['/events'].post.responses[201].content['application/json'].schema).toEqual({ $ref: '#/components/schemas/Event' });
-        expect(paths['/events/{id}'].patch.requestBody.content['application/json'].schema).toEqual({ $ref: '#/components/schemas/EventPatch' });
-        expect(paths['/events/{id}'].delete.responses).toEqual({ 204: { description: 'The Event is deleted' }, 404: { $ref: '#/components/responses/NotFound' } });
+        expect(paths['/events/{id}'].patch.requestBody.content).toEqual({ 'application/merge-patch+json': { schema: { $ref: '#/components/schemas/EventPatch' } } });
+        expect(paths['/events/{id}'].patch.description).toContain('JSON Merge Patch (RFC 7396)');
+        expect(paths['/events/{id}'].delete.responses).toEqual({
+            204: { description: 'The Event is deleted' },
+            404: { $ref: '#/components/responses/NotFound' },
+            default: { $ref: '#/components/responses/Error' },
+        });
         expect(list.tags).toEqual(['Event']);
+    });
+
+    it('gives the location of created records', () => {
+        const document = events();
+        expect(document.paths['/events'].post.responses[201].headers).toEqual({ Location: { $ref: '#/components/headers/Location' } });
+        expect(document.components!.headers!.Location).toEqual({ description: 'URL of the created record', schema: { type: 'string', format: 'uri-reference' } });
+    });
+
+    it('tells malformed requests from invalid records, and has a response for unexpected errors', () => {
+        const responses = (path: string, method: string) => Object.keys(events().paths[path][method].responses);
+        expect(responses('/events', 'post')).toEqual(['201', '400', '409', '415', '422', 'default']);
+        expect(responses('/events/{id}', 'put')).toEqual(['200', '400', '404', '409', '415', '422', 'default']);
+        expect(responses('/events/{id}', 'patch')).toEqual(['200', '400', '404', '409', '415', '422', 'default']);
+        expect(responses('/events', 'get')).toEqual(['200', '400', 'default']);
+        expect(responses('/events/{id}', 'get')).toEqual(['200', '404', 'default']);
+        expect(Object.keys(events().components!.responses!)).toEqual(['BadRequest', 'NotFound', 'Conflict', 'UnsupportedMediaType', 'UnprocessableContent', 'Error']);
     });
 
     it('takes path parameters from the key fields', () => {
@@ -117,6 +138,33 @@ describe('options', () => {
         expect(Object.keys(paths['/events/{id}'])).toEqual(['parameters', 'get']);
         const createOnly = new OpenApiSetBridge({ operations: ['create'] }).toTarget(models(eventsJson)).paths;
         expect(Object.keys(createOnly)).not.toContain('/events/{id}');
+    });
+
+    it('add ETags and If-Match for optimistic locking', async () => {
+        const document = new OpenApiSetBridge({ etags: true }).toTarget(models(eventsJson));
+        const item = document.paths['/events/{id}'];
+        const etag = { ETag: { $ref: '#/components/headers/ETag' } };
+        expect(item.get.responses[200].headers).toEqual(etag);
+        expect(document.paths['/events'].post.responses[201].headers).toEqual({ Location: { $ref: '#/components/headers/Location' }, ...etag });
+        for (const method of ['put', 'patch', 'delete']) {
+            expect(item[method].parameters).toEqual([{ $ref: '#/components/parameters/IfMatch' }]);
+            expect(item[method].responses[412]).toEqual({ $ref: '#/components/responses/PreconditionFailed' });
+        }
+        expect(document.components!.parameters!.IfMatch).toMatchObject({ name: 'If-Match', in: 'header' });
+        expect(await openApiErrors(document)).toEqual([]);
+        // Without the option
+        expect(events().paths['/events/{id}'].put.parameters).toBeUndefined();
+        expect(events().components!.headers!.ETag).toBeUndefined();
+    });
+
+    it('add links to pages', async () => {
+        const document = new OpenApiSetBridge({ pageLinks: true }).toTarget(models(eventsJson));
+        const list = document.components!.schemas!.EventList;
+        expect(list.properties.links).toEqual({ $ref: '#/components/schemas/PageLinks' });
+        expect(list.required).toEqual(['items', 'total', 'links']);
+        expect(Object.keys(document.components!.schemas!.PageLinks.properties)).toEqual(['self', 'first', 'prev', 'next', 'last']);
+        expect(await openApiErrors(document)).toEqual([]);
+        expect(events().components!.schemas!.PageLinks).toBeUndefined();
     });
 
     it('set collection paths and page sizes', () => {
