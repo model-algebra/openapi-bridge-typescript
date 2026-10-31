@@ -2,6 +2,7 @@ import { Model, ModelSet } from "model-algebra-common";
 import { toModelData } from "model-algebra-typescript";
 import { collectionPath, componentName, plural } from "./names.js";
 import { OPENAPI_VERSION } from "./openapi.js";
+import { queryParameters } from "./query.js";
 import { fieldSchema, parameterSchema, readField, withoutExtensions } from "./schemas.js";
 export const CRUD_OPERATIONS = ['list', 'create', 'read', 'replace', 'update', 'delete'];
 const JSON_CONTENT = 'application/json';
@@ -135,6 +136,10 @@ export class OpenApiSetBridge {
             xModel.constraints = constraints;
         if (indexes !== undefined)
             xModel.indexes = indexes;
+        if (model.sortings !== undefined)
+            xModel.sortings = model.sortings;
+        if (model.filters !== undefined)
+            xModel.filters = model.filters;
         // What clients send: no values the database generates, and none of the model's metadata
         const writable = model.fields.filter(field => field.constraints?.identity !== 'always');
         const input = Object.fromEntries(writable.map(field => {
@@ -206,7 +211,10 @@ export class OpenApiSetBridge {
         if (operations.has('list'))
             collectionOperations.get = {
                 operationId: `list${names}`, summary: `List ${names}`, tags,
-                parameters: [{ $ref: '#/components/parameters/Limit' }, { $ref: '#/components/parameters/Offset' }],
+                parameters: [
+                    { $ref: '#/components/parameters/Limit' }, { $ref: '#/components/parameters/Offset' },
+                    ...queryParameters(model, resolve),
+                ],
                 responses: { 200: { description: `A page of ${names}`, content: json(schemaRef(`${name}List`)) }, 400: problem('BadRequest'), ...unexpected },
             };
         if (operations.has('create'))
@@ -305,6 +313,10 @@ export class OpenApiSetBridge {
             model.constraints = xModel.constraints;
         if (xModel.indexes !== undefined)
             model.indexes = xModel.indexes;
+        if (xModel.sortings !== undefined)
+            model.sortings = xModel.sortings;
+        if (xModel.filters !== undefined)
+            model.filters = xModel.filters;
         return model;
     }
 }

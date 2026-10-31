@@ -2,6 +2,7 @@ import { Model, ModelSet, type ModelSetBridge } from "model-algebra-common";
 import { toModelData, type FieldData, type ModelData } from "model-algebra-typescript";
 import { collectionPath, componentName, plural } from "./names.js";
 import { OPENAPI_VERSION, type JsonSchema, type OpenApiDocument, type OpenApiServer } from "./openapi.js";
+import { queryParameters } from "./query.js";
 import { fieldSchema, parameterSchema, readField, withoutExtensions, type RefResolver } from "./schemas.js";
 
 export type CrudOperation = 'list' | 'create' | 'read' | 'replace' | 'update' | 'delete';
@@ -166,6 +167,8 @@ export class OpenApiSetBridge implements ModelSetBridge<OpenApiDocument> {
         if (metadata.schema !== undefined) xModel.schema = metadata.schema;
         if (constraints !== undefined) xModel.constraints = constraints;
         if (indexes !== undefined) xModel.indexes = indexes;
+        if (model.sortings !== undefined) xModel.sortings = model.sortings;
+        if (model.filters !== undefined) xModel.filters = model.filters;
 
         // What clients send: no values the database generates, and none of the model's metadata
         const writable = model.fields.filter(field => field.constraints?.identity !== 'always');
@@ -241,7 +244,10 @@ export class OpenApiSetBridge implements ModelSetBridge<OpenApiDocument> {
         if (operations.has('list'))
             collectionOperations.get = {
                 operationId: `list${names}`, summary: `List ${names}`, tags,
-                parameters: [{ $ref: '#/components/parameters/Limit' }, { $ref: '#/components/parameters/Offset' }],
+                parameters: [
+                    { $ref: '#/components/parameters/Limit' }, { $ref: '#/components/parameters/Offset' },
+                    ...queryParameters(model, resolve),
+                ],
                 responses: { 200: { description: `A page of ${names}`, content: json(schemaRef(`${name}List`)) }, 400: problem('BadRequest'), ...unexpected },
             };
         if (operations.has('create'))
@@ -339,6 +345,8 @@ export class OpenApiSetBridge implements ModelSetBridge<OpenApiDocument> {
         };
         if (xModel.constraints !== undefined) model.constraints = xModel.constraints;
         if (xModel.indexes !== undefined) model.indexes = xModel.indexes;
+        if (xModel.sortings !== undefined) model.sortings = xModel.sortings;
+        if (xModel.filters !== undefined) model.filters = xModel.filters;
         return model;
     }
 }

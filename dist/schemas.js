@@ -124,6 +124,10 @@ export function fieldSchema(field, resolve) {
         schema['x-required'] = true;
     if (field.targets !== undefined)
         schema['x-targets'] = field.targets;
+    if (field.sortable !== undefined)
+        schema['x-sortable'] = field.sortable;
+    if (field.filterable !== undefined)
+        schema['x-filterable'] = field.filterable;
     return schema;
 }
 /** The schema without x- extensions, at any depth: for request bodies and parameters. */
@@ -260,6 +264,10 @@ export function readField(name, property, required, resolve) {
         field.constraints = c;
     if (property['x-targets'] !== undefined)
         field.targets = property['x-targets'];
+    if (property['x-sortable'] !== undefined)
+        field.sortable = property['x-sortable'];
+    if (property['x-filterable'] !== undefined)
+        field.filterable = property['x-filterable'];
     return field;
 }
 //# sourceMappingURL=schemas.js.map

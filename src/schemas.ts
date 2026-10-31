@@ -11,6 +11,7 @@ import type { JsonSchema } from "./openapi.js";
  *   x-identity            identity: always | byDefault
  *   x-primary-key, x-unique, x-foreign-key, x-required   the constraints of the same names
  *   x-targets             target options of the field
+ *   x-sortable, x-filterable   how records can be sorted and filtered by the field
  *
  * A field may be null unless it is nullable: false; such fields are required, and null is not among their types.
  */
@@ -133,6 +134,8 @@ export function fieldSchema(field: FieldData, resolve: RefResolver): JsonSchema 
     if (c.foreignKey !== undefined) schema['x-foreign-key'] = c.foreignKey;
     if (c.required === true) schema['x-required'] = true;
     if (field.targets !== undefined) schema['x-targets'] = field.targets;
+    if (field.sortable !== undefined) schema['x-sortable'] = field.sortable;
+    if (field.filterable !== undefined) schema['x-filterable'] = field.filterable;
     return schema;
 }
 
@@ -251,5 +254,7 @@ export function readField(name: string, property: JsonSchema, required: boolean,
     if (property['x-required'] === true) c.required = true;
     if (Object.keys(c).length > 0) field.constraints = c;
     if (property['x-targets'] !== undefined) field.targets = property['x-targets'];
+    if (property['x-sortable'] !== undefined) field.sortable = property['x-sortable'];
+    if (property['x-filterable'] !== undefined) field.filterable = property['x-filterable'];
     return field;
 }

@@ -95,6 +95,24 @@ gives the paths `/users` (`listUsers`, `createUser`) and `/users/{id}` (`getUser
 }
 ```
 
+### Sorting and filtering
+
+When fields are `sortable` or `filterable`, or the model has `sortings` or `filters` (see
+[model-schema](https://github.com/model-algebra/model-schema#sorting-and-filtering)), list operations get query
+parameters. A field's unnamed definition takes the field's name; named ones are `<field>.<name>`:
+
+| Parameter | From |
+|---|---|
+| `sort=lastName,-age,byName` | Sort keys, applied in order; `-` sorts in descending order. The allowed keys come from sortable fields and from the model's sort orders |
+| `lastName=Smith` | A filter comparing the field with the value the client gives: `{ "op": "=" }` |
+| `age.gte=18`, `age.lte=65` | The same with operators the client chooses: `{ "ops": [">=", "<="] }`; the suffixes are `eq`, `ne`, `lt`, `lte`, `gt`, `gte` |
+| `lastName.prefix=Sm` | A predicate with an argument: `startsWith(lastName, row, "Sm")` |
+| `status.active=true` | A filter the client only switches on: a fixed value, another field, or a predicate without an argument |
+| `adults=true`, `nearby=5` | Named filters of the model; switches, or a predicate with an argument: `isWithinKm(row, 5)` |
+
+Values are validated with the schema of the field, or of the declared argument type. A filter can't be named like
+another one or like `limit`, `offset` or `sort`, and sort and filter definitions must name existing fields.
+
 ### Options
 
 | Option | Default | |
@@ -130,7 +148,8 @@ Schema can't say goes into extensions, so that the model can be read back:
 
 | Extension | |
 |---|---|
-| `x-model` | On the schema of a model: its name, version, database schema, table constraints and indexes |
+| `x-model` | On the schema of a model: its name, version, database schema, table constraints, indexes, sort orders and filters |
+| `x-sortable`, `x-filterable` | How records can be sorted and filtered by the field |
 | `x-primary-key`, `x-unique`, `x-foreign-key`, `x-required`, `x-identity` | Field constraints |
 | `x-default-function` | `default: { function }`: `now`, `currentDate`, `uuid` |
 | `x-precision`, `x-scale`, `x-ref` | Type parameters |
